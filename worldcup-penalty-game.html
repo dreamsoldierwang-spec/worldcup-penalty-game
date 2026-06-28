@@ -1361,14 +1361,99 @@ function drawImpactFX(){
   ctx.restore();
 }
 
+/* ── Sound Effects (Web Audio API - procedural) ── */
+const SFX={
+  ctx:null,
+  init(){if(!this.ctx)this.ctx=new(window.AudioContext||window.webkitAudioContext)();if(this.ctx.state==='suspended')this.ctx.resume();},
+  play(type){
+    try{
+      this.init();
+      const ac=this.ctx,t=ac.currentTime;
+      if(type==='cheer') this._cheer(ac,t);
+      else if(type==='boo') this._boo(ac,t);
+      else if(type==='kick') this._kick(ac,t);
+      else if(type==='whistle') this._whistle(ac,t);
+    }catch(e){}
+  },
+  _noise(ac,t,dur,freqStart,freqEnd,vol){
+    const buf=ac.createBuffer(1,ac.sampleRate*dur,ac.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<d.length;i++){
+      const p=i/d.length;
+      const env=Math.sin(p*Math.PI)*vol;
+      d[i]=(Math.random()*2-1)*env;
+    }
+    const src=ac.createBufferSource();src.buffer=buf;
+    const g=ac.createGain();g.gain.setValueAtTime(vol,t);g.gain.linearRampToValueAtTime(0,t+dur);
+    const f=ac.createBiquadFilter();f.type='bandpass';f.Q.value=.5;
+    f.frequency.setValueAtTime(freqStart,t);f.frequency.linearRampToValueAtTime(freqEnd,t+dur);
+    src.connect(f);f.connect(g);g.connect(ac.destination);src.start(t);src.stop(t+dur);
+    return src;
+  },
+  _cheer(ac,t){
+    // Layered crowd cheer - multiple noise bursts at different frequencies
+    for(let i=0;i<4;i++){
+      const delay=i*.08;
+      const dur=1.8+Math.random()*.5;
+      const freq=800+Math.random()*2000;
+      this._noise(ac,t+delay,dur,freq,freq+800,.08+Math.random()*.06);
+    }
+    // Add some higher pitched "woohoo" layers
+    for(let i=0;i<3;i++){
+      const delay=.15+i*.12;
+      const dur=1.2+Math.random()*.3;
+      this._noise(ac,t+delay,dur,2000+Math.random()*1500,2500+Math.random()*1000,.05+Math.random()*.04);
+    }
+  },
+  _boo(ac,t){
+    // Low rumbling boos - low frequency noise layers
+    for(let i=0;i<3;i++){
+      const delay=i*.1;
+      const dur=1.5+Math.random()*.4;
+      this._noise(ac,t+delay,dur,200+Math.random()*200,150,.1+Math.random()*.05);
+    }
+    // Descending tone for dramatic disappointment
+    const osc=ac.createOscillator();osc.type='sawtooth';
+    osc.frequency.setValueAtTime(180,t);osc.frequency.linearRampToValueAtTime(80,t+1.2);
+    const g=ac.createGain();g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(.06,t+.05);g.gain.linearRampToValueAtTime(0,t+1.2);
+    osc.connect(g);g.connect(ac.destination);osc.start(t);osc.stop(t+1.3);
+  },
+  _kick(ac,t){
+    // Short impact thud
+    const osc=ac.createOscillator();osc.type='sine';
+    osc.frequency.setValueAtTime(150,t);osc.frequency.exponentialRampToValueAtTime(40,t+.1);
+    const g=ac.createGain();g.gain.setValueAtTime(.3,t);g.gain.exponentialRampToValueAtTime(.001,t+.15);
+    osc.connect(g);g.connect(ac.destination);osc.start(t);osc.stop(t+.2);
+    // Click layer
+    const o2=ac.createOscillator();o2.type='triangle';
+    o2.frequency.setValueAtTime(800,t);o2.frequency.exponentialRampToValueAtTime(200,t+.03);
+    const g2=ac.createGain();g2.gain.setValueAtTime(.15,t);g2.gain.exponentialRampToValueAtTime(.001,t+.06);
+    o2.connect(g2);g2.connect(ac.destination);o2.start(t);o2.stop(t+.1);
+  },
+  _whistle(ac,t){
+    // Short referee whistle
+    const osc=ac.createOscillator();osc.type='sine';
+    osc.frequency.setValueAtTime(2800,t);osc.frequency.setValueAtTime(3200,t+.1);osc.frequency.setValueAtTime(2800,t+.2);
+    const g=ac.createGain();g.gain.setValueAtTime(.12,t);g.gain.setValueAtTime(.12,t+.15);g.gain.linearRampToValueAtTime(0,t+.25);
+    osc.connect(g);g.connect(ac.destination);osc.start(t);osc.stop(t+.3);
+  }
+};
+
 function triggerImpactForResult(result){
   const isGK = selectedMode === 'keeper';
   if(result==='goal'||result==='near'){
     triggerImpact('ゴール!', '#ff2200', isGK?'失点…':'決まった!');
+    // Shooter scores = cheer, Keeper concedes = boo
+    SFX.play(isGK?'boo':'cheer');
   }else if(result==='saved'){
     triggerImpact('セーブ!', '#00ddff', isGK?'完璧!':'防がれた!');
+    // Keeper saves = cheer, Shooter denied = boo
+    SFX.play(isGK?'cheer':'boo');
   }else{
     triggerImpact('ハズレ!', '#888', '枠外!');
+    // Miss = light boo
+    SFX.play('boo');
   }
 }
 
@@ -1379,6 +1464,7 @@ let shotAnim=null;
 let impactFX=null; // manga-style impact text effect
 function animateShot(result){
   G.state='shooting';G.animating=true;
+  SFX.play('kick');
   document.getElementById('phaseHint').classList.remove('show');
   document.getElementById('chargeBarWrap').classList.remove('show');
   document.getElementById('powerUI').classList.remove('show');
@@ -1553,6 +1639,7 @@ const GK = {
     G.state = 'shooting';
     G.animating = true;
     this.diveDir = dir;
+    SFX.play('kick');
     document.getElementById('gkDivePad').classList.remove('show');
     document.getElementById('phaseHint').classList.remove('show');
 
